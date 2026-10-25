@@ -10,6 +10,96 @@ import pandas as pd
 import checks
 
 STANDARD_NOTE = "You only see the tables you have uploaded to, and the changes made to them."  # (new) shown to standard users
+# =============== COPY THIS PART ===============
+# ---------------------------------------------------------------------------
+# ZAIN BRAND THEMING & STYLING
+# ---------------------------------------------------------------------------
+zain_teal = gr.themes.Color(
+    c50="#e6f7f7",
+    c100="#b3e8e8",
+    c200="#80d8d9",
+    c300="#4dc9ca",
+    c400="#1ab9bb",
+    c500="#00A3A6",  # Main Zain Teal/Turquoise
+    c600="#008b8e",
+    c700="#007275",
+    c800="#005a5c",
+    c900="#004143",
+    c950="#00292a",
+)
+
+zain_purple = gr.themes.Color(
+    c50="#f4eff9",
+    c100="#dfd0ef",
+    c200="#c9b0e4",
+    c300="#b491da",
+    c400="#9f71cf",
+    c500="#5C2D91",  # Main Zain Purple
+    c600="#512780",
+    c700="#43206a",
+    c800="#351954",
+    c900="#27123d",
+    c950="#1a0c29",
+)
+
+# Custom Theme definition
+zain_theme = gr.themes.Soft(
+    primary_hue=zain_teal,
+    secondary_hue=zain_purple,
+    neutral_hue="slate",
+    font=[gr.themes.GoogleFont("Poppins"), "sans-serif"],
+).set(
+    button_primary_background_fill="*primary_500",
+    button_primary_background_fill_hover="*primary_600",
+    button_primary_text_color="#FFFFFF",
+    block_title_text_color="*secondary_500",
+)
+
+# Custom CSS for Zain branding header and hiding default footer
+custom_css = """
+/* Zain Header Styling */
+.zain-header {
+    background: linear-gradient(135deg, #5C2D91 0%, #00A3A6 100%);
+    padding: 24px 32px;
+    border-radius: 12px;
+    color: white;
+    margin-bottom: 16px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.zain-header h1 {
+    color: white !important;
+    font-weight: 700;
+    margin: 0;
+    font-size: 2rem;
+}
+
+.zain-header p {
+    color: rgba(255, 255, 255, 0.9) !important;
+    margin: 6px 0 0 0;
+    font-size: 1rem;
+}
+
+/* User Info Bar Styling */
+.user-info-row {
+    margin-bottom: 15px;
+    align-items: center;
+}
+
+/* Tab Active Header Styling */
+.tabs div button.selected {
+    border-bottom-color: #00A3A6 !important;
+    color: #5C2D91 !important;
+    font-weight: 600;
+}
+
+/* Hide Gradio Footer Completely */
+footer {
+    display: none !important;
+}
+"""
+# ---------------------------------------------------------------------------
+
 
 
 def _user(request):  # (new) the name of whoever is signed in, or None
@@ -35,21 +125,19 @@ def notices(request: gr.Request):  # (new) a short note for standard users on th
 def role_tabs(request: gr.Request):  # (new) the Users tab is only shown to admins
     return gr.Tab(visible=_admin(request))
 
-
-def upload_files(paths, template, request: gr.Request): # (new: template = the one picked in the dropdown) #we get the path from user, the request is users session/ creditals from the login process
+#=============== REPLACE THIS PART ===============
+def upload_files(paths, template, request: gr.Request):
     if not paths:
-        return "Choose at least one file first.", None # returns the object none
-    if not template:  # (new) keep the chosen files in the box so the user only has to pick a template
-        return "Choose a template first.", paths
-    user = _user(request) or "unknown" #gets the username from the request and fillswith none if it cant   (now it fills in "unknown" instead of None)
+        return "Choose at least one file first.", None
+    user = _user(request) or "unknown"
     conn = checks.connect()
     parts = []
     try:
         for p in paths:
-            path = p if isinstance(p, str) else p.name # if p is a string else  find the name of the file 
+            path = p if isinstance(p, str) else p.name
             name = os.path.basename(path)
             with open(path, "rb") as f:
-                r = checks.handle_file(conn, f, name, user, template)
+               r = checks.handle_file(conn, f, name, user, template)
             if r["status"] == "rejected":
                 problems = "\n".join(f"- {e}" for e in r["errors"])
                 parts.append(f"**{name}: REJECTED.** Nothing was changed.\n{problems}")
@@ -59,7 +147,6 @@ def upload_files(paths, template, request: gr.Request): # (new: template = the o
     finally:
         conn.close()
     return "\n\n".join(parts), None  # None empties the file box
-
 
 def list_templates_ui():  # (new) fills the template dropdown from the templates folder
     return gr.Dropdown(choices=checks.list_templates(), value=None)
@@ -72,9 +159,13 @@ def template_details(name):  # (new) shows the user what the chosen template req
         cols = checks.load_template(name)
     except Exception as e:
         return f"This template has a problem: {e}. Ask an administrator to fix it."
-    listing = ", ".join(f"`{c}` ({t})" for c, t in cols)
-    return (f"**Required columns, in this order:** {listing}\n\n"
-            "No extra columns, no empty values and no duplicate rows.")
+    rules = "No extra columns, no empty values and no duplicate rows."
+    if len(cols) == 1:
+        listing = ", ".join(f"`{c}` ({t})" for c, t in cols[0][1])
+        return f"**Required columns, in this order:** {listing}\n\n{rules}"
+    lines = [f"- **Sheet `{s}`:** " + ", ".join(f"`{c}` ({t})" for c, t in sc) for s, sc in cols]  # (new) several sheets
+    return ("**This Excel file needs exactly these sheets** (any order):\n" + "\n".join(lines)
+            + f"\n\nEach sheet: columns in this order. {rules}")
 
 
 def list_tables(request: gr.Request):
@@ -139,10 +230,19 @@ def delete_user_ui(username, request: gr.Request):  # (new) delete a user
     msg = checks.delete_user(_user(request), username)
     return msg, show_users(request)
 
+# Building the App UI
+with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
+    # Zain Branded Banner Header
+    gr.HTML(
+        """
+        <div class="zain-header">
+            <h1>Zain HR Portal</h1>
+            <p>Data Sheet Verification & Management System</p>
+        </div>
+        """
+    )
+    
 
-# the  format 
-with gr.Blocks(title="HR Upload") as demo:
-    gr.Markdown("# HR Upload")
     with gr.Row():
         who_md = gr.Markdown()
         logout_btn = gr.Button("Log out", link="/logout", scale=0)  # (new) for everyone
@@ -199,4 +299,8 @@ with gr.Blocks(title="HR Upload") as demo:
     demo.load(show_users, None, users_view)
 
 if __name__ == "__main__":
-    demo.launch(auth=checks.verify_login)  # (new) logins are checked against the users table now
+    demo.launch(
+        auth=checks.verify_login,
+        theme=zain_theme,
+        css=custom_css,
+    )  # (new) logins are checked against the users table now

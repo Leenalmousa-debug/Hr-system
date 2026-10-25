@@ -61,20 +61,31 @@ def list_templates():
 
 
 def load_template(name):
-    """The template the user picked: header row = column names and order,
-    example row(s) = data types. Returns [(column, type), ...]."""
+    """The template the user picked. Returns [(sheet name, [(column, type), ...]), ...].
+    Header row = column names and order, example row(s) = data types.
+    A CSV template (or a workbook with one sheet) has just one entry."""
     files = _template_files()
     if name not in files:  # only names that exist in the folder are accepted, never a typed path
         raise FileNotFoundError("that template does not exist")
     fn = files[name]
-    df = read_file(os.path.join(TEMPLATE_DIR, fn), fn.rsplit(".", 1)[-1].lower())
-    cols = list(df.columns)
-    if df.empty or any(c.startswith("Unnamed:") for c in cols):
-        raise ValueError("it needs a header row with a name for every column and at least one example row")
-    types = [column_type(df[c]) for c in cols]
-    if None in types:
-        raise ValueError("every column needs an example value in the template")
-    return list(zip(cols, types))
+    sheets = read_file(os.path.join(TEMPLATE_DIR, fn), fn.rsplit(".", 1)[-1].lower())
+    if not sheets:
+        raise ValueError("the template has no sheets")
+    result = []
+    for sheet, df in sheets.items():
+        where = f" (sheet '{sheet}')" if len(sheets) > 1 else ""
+        cols = list(df.columns)
+        if df.empty or any(c.startswith("Unnamed:") for c in cols):
+            raise ValueError("it needs a header row with a name for every column and at least one example row" + where)
+        types = [column_type(df[c]) for c in cols]
+        if None in types:
+            raise ValueError("every column needs an example value in the template" + where)
+        result.append((sheet, list(zip(cols, types))))
+    if len(result) > 1:
+        names = [clean_table_name(sheet) for sheet, _ in result]
+        if len(set(names)) < len(names):
+            raise ValueError("two sheets have names that would give the same table name")
+    return result
 
 
 def now():
@@ -92,7 +103,13 @@ def clean_table_name(stem):
     return name
 
 
+def _tidy(df):
+    df.columns = [str(c).strip() for c in df.columns]
+    return df.replace(r"^\s*$", pd.NA, regex=True)
+
+
 def read_file(path, ext):
+    """Returns {sheet name: table}. A CSV file has just one table, under the name None."""
     if ext == "csv":
         try:
             df = pd.read_csv(path, encoding="utf-8-sig")
@@ -100,10 +117,9 @@ def read_file(path, ext):
             if hasattr(path, "seek"):
                 path.seek(0)  # go back to the start of the file before trying again
             df = pd.read_csv(path, encoding="latin-1")
-    else:
-        df = pd.read_excel(path)  # first sheet; .xls needs the xlrd package
-    df.columns = [str(c).strip() for c in df.columns]
-    return df.replace(r"^\s*$", pd.NA, regex=True)
+        return {None: _tidy(df)}
+    sheets = pd.read_excel(path, sheet_name=None)  # every sheet; .xls needs the xlrd package
+    return {str(name).strip(): _tidy(df) for name, df in sheets.items()}
 
 
 def column_type(series):
@@ -191,64 +207,94 @@ def log(conn, user, table, action, filename, before, after, details):
 
 def handle_file(conn, f, filename, user, template_name):
     """f is any file-like object (the uploaded file); filename is its name;
-    template_name is the template the user picked from the list."""
+    template_name is the template the user picked from the list.
+    A template with several sheets creates one table per sheet (<name>_<sheet>).
+    Either every sheet is accepted and saved, or nothing is changed."""
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if TABLE_NAME_FROM == "template" and template_name:
-        table = clean_table_name(template_name)
+        base = clean_table_name(template_name)
     else:
-        table = table_name_for(filename)
-    result = {"file": filename, "table": table, "template": template_name, "status": "rejected", "errors": []}
+        base = table_name_for(filename)
+    result = {"file": filename, "table": base, "template": template_name,
+              "status": "rejected", "errors": [], "tables": []}
 
     def reject(errors):
         """Every rejection is written to the change log, whatever the reason."""
         result["errors"] = errors
-        log(conn, user, table, "REJECTED", filename, None, None, f"template {template_name}: " + " | ".join(errors))
+        log(conn, user, base, "REJECTED", filename, None, None, f"template {template_name}: " + " | ".join(errors))
         return result
 
     if template_name not in list_templates():
         return reject(["Choose a template from the list."])
     if ext not in ALLOWED:
         return reject(["Only CSV, XLSX and XLS files are allowed."])
-    if table in RESERVED or table.startswith("sqlite_"):
-        return reject([f"The name '{table}' is reserved. Rename the template (or the file)."])
-
     try:
-        df = read_file(f, ext)
+        sheets = read_file(f, ext)
     except Exception as e:
         return reject([f"The file could not be read ({type(e).__name__}). Check it is not damaged."])
-    if df.empty:
-        return reject(["The file has no data rows."])
-
-    exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    if not sheets:
+        return reject(["The file has no sheets."])
     try:
         template = load_template(template_name)
     except Exception as e:
         return reject([f"The template file has a problem: {e}. Ask the administrator to fix it."])
 
-    errors = validate(df, template)
+    multi = len(template) > 1
+    errors, jobs = [], []  # jobs: (table name, data, sheet name)
+    if not multi:
+        df = next(iter(sheets.values()))  # the only table of a CSV, or the first sheet of a workbook
+        errors += ["The file has no data rows."] if df.empty else validate(df, template[0][1])
+        jobs.append((base, df, template[0][0]))
+    else:
+        if ext == "csv":
+            return reject(["This template has several sheets, so upload an Excel file (XLSX or XLS)."])
+        have = {s.lower(): s for s in sheets}  # sheet names are not case sensitive; their order does not matter
+        wanted = {s.lower() for s, _ in template}
+        missing = [s for s, _ in template if s.lower() not in have]
+        extra = [s for s in sheets if s.lower() not in wanted]
+        if missing:
+            errors.append("Missing sheet(s): " + ", ".join(missing))
+        if extra:
+            errors.append("Extra sheet(s) are not allowed: " + ", ".join(extra))
+        for sheet, tcols in template:
+            if sheet.lower() not in have:
+                continue
+            df = sheets[have[sheet.lower()]]
+            found = ["The sheet has no data rows."] if df.empty else validate(df, tcols)
+            errors += [f"Sheet '{sheet}': {e}" for e in found]
+            jobs.append((clean_table_name(f"{base}_{sheet}"), df, sheet))
+    for table, _, _ in jobs:
+        if table in RESERVED or table.startswith("sqlite_"):
+            errors.append(f"The name '{table}' is reserved. Rename the template (or the file).")
     if errors:
         return reject(errors)
 
-    cols = list(df.columns)
-    types = [column_type(df[c]) for c in cols]
-    rows = [tuple(clean(v) for v in r) for r in df.itertuples(index=False, name=None)]
     try:
         conn.execute("BEGIN")
-        before = conn.execute(f"SELECT COUNT(*) FROM {q(table)}").fetchone()[0] if exists else None
-        if exists:
-            conn.execute(f"DROP TABLE {q(table)}")
-        conn.execute(f"CREATE TABLE {q(table)} (" + ", ".join(f"{q(c)} {t}" for c, t in zip(cols, types)) + ")")
-        conn.executemany(f"INSERT INTO {q(table)} VALUES ({','.join('?' * len(cols))})", rows)
-        action = "REPLACED" if exists else "CREATED"
-        log(conn, user, table, action, filename, before, len(rows), f"{len(cols)} columns, template {template_name}")
+        for table, df, sheet in jobs:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+            cols = list(df.columns)
+            types = [column_type(df[c]) for c in cols]
+            rows = [tuple(clean(v) for v in r) for r in df.itertuples(index=False, name=None)]
+            before = conn.execute(f"SELECT COUNT(*) FROM {q(table)}").fetchone()[0] if exists else None
+            if exists:
+                conn.execute(f"DROP TABLE {q(table)}")
+            conn.execute(f"CREATE TABLE {q(table)} (" + ", ".join(f"{q(c)} {t}" for c, t in zip(cols, types)) + ")")
+            conn.executemany(f"INSERT INTO {q(table)} VALUES ({','.join('?' * len(cols))})", rows)
+            action = "REPLACED" if exists else "CREATED"
+            details = f"{len(cols)} columns, template {template_name}" + (f", sheet {sheet}" if multi else "")
+            log(conn, user, table, action, filename, before, len(rows), details)
+            result["tables"].append({"table": table, "status": action.lower(), "rows": len(rows)})
         conn.execute("COMMIT")
     except Exception as e:
         conn.execute("ROLLBACK")
+        result["tables"] = []
         result["errors"].append(f"Saving failed, nothing was changed ({type(e).__name__}).")
         return result
 
-    result["status"] = "replaced" if exists else "created"
-    result["rows"] = len(rows)
+    result["status"] = "replaced" if any(t["status"] == "replaced" for t in result["tables"]) else "created"
+    result["rows"] = sum(t["rows"] for t in result["tables"])
+    result["table"] = ", ".join(t["table"] for t in result["tables"])
     return result
 
 
