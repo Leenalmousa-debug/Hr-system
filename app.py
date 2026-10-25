@@ -1,3 +1,4 @@
+import html
 import os
 
 # To run locally not make it go through proxy 
@@ -9,6 +10,23 @@ import pandas as pd
 
 import checks
 
+
+# (new) Icons. The two trash-can files are written into an "icons" folder next to this file each time the app starts.
+ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+os.makedirs(ICON_DIR, exist_ok=True)
+_TRASH_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" '
+              'stroke="{c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+              '<path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>'
+              '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>')
+for _name, _color in (("trash_red.svg", "#C62828"), ("trash_white.svg", "#FFFFFF")):
+    with open(os.path.join(ICON_DIR, _name), "w", encoding="utf-8") as _f:
+        _f.write(_TRASH_SVG.format(c=_color))
+TRASH_ICON = os.path.join(ICON_DIR, "trash_red.svg")  # the trash can next to each user
+TRASH_ICON_BLACK = os.path.join(ICON_DIR, "trash_red.svg")  # on the red "Yes, delete" button
+WARN_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" '
+            'stroke="#B26A00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none">'
+            '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>'
+            '<path d="M12 9v4"/><path d="M12 17h.01"/></svg>')  # the warning triangle
 STANDARD_NOTE = "You only see the tables you have uploaded to, and the changes made to them."  # (new) shown to standard users
 # =============== COPY THIS PART ===============
 # ---------------------------------------------------------------------------
@@ -92,15 +110,114 @@ custom_css = """
     color: #5C2D91 !important;
     font-weight: 600;
 }
+/* Delete confirmation modal */
+#delete-modal {
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
 
-/* Hide Gradio Footer Completely */
+    width: min(440px, calc(100vw - 32px)) !important;
+    max-width: 440px !important;
+    box-sizing: border-box !important;
+
+    z-index: 99999 !important;
+    background: var(--background-fill-primary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 16px !important;
+    padding: 24px !important;
+
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.60),
+                0 12px 35px rgba(0, 0, 0, 0.25) !important;
+
+    overflow: visible !important;
+}
+
+/* Prevent Gradio's internal containers from clipping modal content */
+#delete-modal > *,
+#delete-modal .wrap {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+/* Modal heading */
+.modal-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 21px;
+    font-weight: 700;
+    color: #5C2D91;
+    margin-bottom: 16px;
+}
+
+/* Modal message */
+#delete-modal p {
+    font-size: 15px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+    margin: 10px 0;
+}
+
+/* Keep the two action buttons visible side by side */
+#delete-modal .row {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+    margin-top: 24px !important;
+    width: 100% !important;
+}
+
+#delete-modal .row > * {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    width: 50% !important;
+}
+
+#delete-modal button {
+    min-height: 46px !important;
+    height: auto !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+    padding: 10px 12px !important;
+    font-size: 14px !important;
+}
+
+/* Warning message */
+.note-warn {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    margin: 8px 0;
+    border-left: 4px solid #B26A00;
+    background: rgba(178, 106, 0, 0.08);
+    border-radius: 6px;
+}
+
+.user-row,
+.user-head {
+    align-items: center;
+    border-bottom: 1px solid var(--border-color-primary);
+    padding: 4px 0;
+}
+
+.user-head {
+    font-weight: 600;
+}
+
+.trash-btn {
+    min-width: 44px !important;
+}
+
+/* Hide Gradio footer */
 footer {
     display: none !important;
 }
 """
-# ---------------------------------------------------------------------------
-
-
 
 def _user(request):  # (new) the name of whoever is signed in, or None
     return getattr(request, "username", None)
@@ -214,25 +331,44 @@ def show_log(request: gr.Request):
     return df
 
 
-def show_users(request: gr.Request):  # (new) the users list, without the password hashes
+def user_rows(request: gr.Request):  # (new) the users list, without the password hashes
     if not _admin(request):
-        return pd.DataFrame()
-    rows = [(u, "yes" if a else "no", c) for u, a, c in checks.list_users()]
-    return pd.DataFrame(rows, columns=["username", "admin", "created_at"])
+        return []
+    return [[u, "admin" if a else "standard user", c] for u, a, c in checks.list_users()]  # (new) one entry per user, drawn as a row with a trash icon
 
 
 def save_user_ui(username, password, make_admin, request: gr.Request):  # (new) add or update a user
     msg = checks.save_user(_user(request), username, password, make_admin)
-    return msg, show_users(request), ""  # "" clears the password box
+    return msg, user_rows(request), ""  # "" clears the password box
 
 
-def delete_user_ui(username, request: gr.Request):  # (new) delete a user
-    msg = checks.delete_user(_user(request), username)
-    return msg, show_users(request)
+def delete_warning_html(username):  # (new) the text inside the pop-up
+    return (f'<div class="modal-head">{WARN_SVG}<span>Delete this user?</span></div>'
+            f"<p>You are about to permanently delete <b>{html.escape(username)}</b>. This cannot be undone.</p>"
+            "<p>They will no longer be able to sign in. Their past uploads stay in the change log.</p>")
+
+
+def make_ask(username):  # (new) builds the function for one user's trash icon
+    def ask(request: gr.Request):
+        if not _admin(request):
+            return "", gr.Group(visible=False), "", ""
+        if username.lower() == (_user(request) or "").lower():
+            return "", gr.Group(visible=False), "", "You cannot delete your own account."
+        return username, gr.Group(visible=True), delete_warning_html(username), ""  # opens the pop-up
+    return ask
+
+
+def confirm_delete(username, request: gr.Request):  # (new) the "Yes, delete" button
+    msg = checks.delete_user(_user(request), username) if username else "No user selected."
+    return msg, user_rows(request), "", gr.Group(visible=False)
+
+
+def cancel_delete():  # (new) the "Cancel" button
+    return "", gr.Group(visible=False), "Deletion cancelled."
+
 
 # Building the App UI
 with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
-    # Zain Branded Banner Header
     gr.HTML(
         """
         <div class="zain-header">
@@ -241,7 +377,6 @@ with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
         </div>
         """
     )
-    
 
     with gr.Row():
         who_md = gr.Markdown()
@@ -267,17 +402,59 @@ with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
         log_view = gr.Dataframe(interactive=False)
         refresh_log = gr.Button("Refresh")
     with gr.Tab("Users", visible=False) as tab_users:  # (new) hidden until we know the person is an admin
-        users_view = gr.Dataframe(interactive=False)
+        users_state = gr.State([])  # (new) the list of users, redrawn below whenever it changes
+
+        @gr.render(inputs=users_state)
+        def draw_users(rows):  # (new) one row per user: name, role, created, trash icon
+            with gr.Row(elem_classes="user-head"):
+                gr.HTML("Username")
+                gr.HTML("Role")
+                gr.HTML("Created")
+                gr.HTML("", min_width=44, scale=0)
+            if not rows:
+                gr.HTML("No users to show.")
+            for username, role, created in rows:
+                with gr.Row(elem_classes="user-row"):
+                    gr.HTML(html.escape(username))
+                    gr.HTML(role)
+                    gr.HTML(html.escape(str(created)))
+                    trash = gr.Button(
+    "",
+    icon=TRASH_ICON_BLACK,
+    size="sm",
+    scale=0,
+    min_width=44,
+    elem_classes="trash-btn"
+)
+                    trash.click(make_ask(username), None, [pending_user, confirm_box, confirm_md, user_msg])
+
+        gr.HTML(f'<div class="note-warn">{WARN_SVG}<span>Deleting a user is permanent and cannot be undone. '
+                "Use the trash icon in a user's row. You will be asked to confirm first.</span></div>")  # (new)
+        pending_user = gr.State("")  # (new) the user waiting for confirmation
+        user_msg = gr.Markdown()
         gr.Markdown("**Add a user, or change an existing one** (leave the password empty to keep it)")
         u_name = gr.Textbox(label="Username")
         u_pass = gr.Textbox(label="Password (at least 8 characters)", type="password")
         u_admin = gr.Checkbox(label="Admin")
         save_btn = gr.Button("Save user", variant="primary")
-        gr.Markdown("**Delete a user**")
-        d_name = gr.Textbox(label="Username to delete")
-        del_btn = gr.Button("Delete user")
-        user_msg = gr.Markdown()
 
+    with gr.Group(visible=False, elem_id="delete-modal") as confirm_box:
+        confirm_md = gr.HTML()
+
+        with gr.Row(equal_height=True):
+            confirm_btn = gr.Button(
+                "Yes, delete",
+                variant="stop",
+                icon=TRASH_ICON_BLACK,
+                scale=1,
+                min_width=0
+            )
+            cancel_btn = gr.Button(
+                "Cancel",
+                variant="secondary",
+                scale=1,
+                min_width=0
+            )
     go.click(upload_files, [files, template_pick], [result, files]).then(show_log, None, log_view).then(
         list_tables, None, table_pick
     )
@@ -285,10 +462,13 @@ with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
     table_pick.change(show_table, table_pick, table_view)
     refresh_tables.click(list_tables, None, table_pick)
     refresh_log.click(show_log, None, log_view)
-    save_btn.click(save_user_ui, [u_name, u_pass, u_admin], [user_msg, users_view, u_pass]).then(
+    save_btn.click(save_user_ui, [u_name, u_pass, u_admin], [user_msg, users_state, u_pass]).then(
         show_log, None, log_view
     )
-    del_btn.click(delete_user_ui, d_name, [user_msg, users_view]).then(show_log, None, log_view)
+    confirm_btn.click(confirm_delete, pending_user, [user_msg, users_state, pending_user, confirm_box]).then(
+        show_log, None, log_view
+    )  # (new)
+    cancel_btn.click(cancel_delete, None, [pending_user, confirm_box, user_msg])  # (new)
 
     demo.load(whoami, None, who_md)
     demo.load(list_templates_ui, None, template_pick)  # (new)
@@ -296,11 +476,12 @@ with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
     demo.load(role_tabs, None, tab_users)
     demo.load(show_log, None, log_view)
     demo.load(list_tables, None, table_pick)
-    demo.load(show_users, None, users_view)
+    demo.load(user_rows, None, users_state)
 
 if __name__ == "__main__":
     demo.launch(
         auth=checks.verify_login,
         theme=zain_theme,
         css=custom_css,
+        allowed_paths=[ICON_DIR],  # (new) lets the page load the trash-can icons
     )  # (new) logins are checked against the users table now
