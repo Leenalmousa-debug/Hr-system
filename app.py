@@ -10,7 +10,7 @@ import pandas as pd
 import checks
 
 STANDARD_NOTE = "You only see the tables you have uploaded to, and the changes made to them."  # shown to standard users
-
+# =============== COPY THIS PART ===============
 # ---------------------------------------------------------------------------
 # ZAIN BRAND THEMING & STYLING
 # ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ def notices(request: gr.Request):  # a short note for standard users on the Tabl
 def role_tabs(request: gr.Request):  # the Users tab is only shown to admins
     return gr.Tab(visible=_admin(request))
 
-
+#=============== REPLACE THIS PART ===============
 def upload_files(paths, request: gr.Request):
     if not paths:
         return "Choose at least one file first.", None
@@ -280,7 +280,7 @@ with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
     demo.load(show_log, None, log_view)
     demo.load(list_tables, None, table_pick)
     demo.load(show_users, None, users_view)
-
+# =============== COPY THIS PART ===============
 if __name__ == "__main__":
     demo.launch(
         auth=checks.verify_login,
