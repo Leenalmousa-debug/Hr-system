@@ -1,14 +1,16 @@
 """Checking and saving logic (no web code). Used by app.py."""
 import hashlib
 import hmac
+import io
 import os
 import re
 import sqlite3
+import zipfile
 from datetime import datetime
 
 import pandas as pd
 
-ALLOWED = {"csv", "xlsx", "xls"}
+ALLOWED = {"csv", "xlsx", "xls", "xlsb"}
 
 # Columns that identify a row (e.g. ["employee_id"]). Leave empty to treat a row
 # as a duplicate only when every column is identical to an earlier row.
@@ -16,15 +18,20 @@ DUPLICATE_KEY = []
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, "hr.db")
-RESERVED = {"change_log", "users"}
+RESERVED = {"change_log", "users", "table_versions"}
 
-# All templates live in this folder: one file per template (.csv, .xlsx or .xls).
+# All templates live in this folder: one file per template (.csv, .xlsx, .xls or .xlsb).
 # The template's name is the file name without the extension.
 TEMPLATE_DIR = os.path.join(BASE, "templates")
 
 # "template": the table is named after the template the user picked (employees.csv -> table "employees").
 # "file": the table is named after the uploaded file instead.
 TABLE_NAME_FROM = "template"
+
+# When a new file replaces a table, the old data is not thrown away: it is kept as an earlier version
+# (employees__v1, employees__v2, ...). This is how many earlier versions are kept for each table;
+# older ones are deleted automatically.
+KEEP_VERSIONS = 4
 
 def connect():
     conn = sqlite3.connect(DB_PATH, isolation_level=None)  # we manage transactions
@@ -36,6 +43,11 @@ def connect():
     conn.execute(
         "CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY COLLATE NOCASE, "
         "password_hash TEXT NOT NULL, is_admin INTEGER NOT NULL DEFAULT 0, created_at TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS table_versions (table_name TEXT, version INTEGER, archived_name TEXT, "
+        "uploaded_at TEXT, uploaded_by TEXT, source_file TEXT, rows_count INTEGER, archived_at TEXT, "
+        "PRIMARY KEY (table_name, version))"
     )
     if conn.execute("SELECT 1 FROM users").fetchone() is None:
         # first start: one admin so you can sign in. Change this password straight away.
@@ -78,8 +90,6 @@ def load_template(name):
         if df.empty or any(c.startswith("Unnamed:") for c in cols):
             raise ValueError("it needs a header row with a name for every column and at least one example row" + where)
         types = [column_type(df[c]) for c in cols]
-        if None in types:
-            raise ValueError("every column needs an example value in the template" + where)
         result.append((sheet, list(zip(cols, types))))
     if len(result) > 1:
         names = [clean_table_name(sheet) for sheet, _ in result]
@@ -118,7 +128,60 @@ def read_file(path, ext):
                 path.seek(0)  # go back to the start of the file before trying again
             df = pd.read_csv(path, encoding="latin-1")
         return {None: _tidy(df)}
-    sheets = pd.read_excel(path, sheet_name=None)  # every sheet; .xls needs the xlrd package
+    if ext == "xlsb":
+        from pyxlsb import biff12
+        from pyxlsb.handlers import SheetHandler
+        from pyxlsb.reader import BIFF12Reader
+
+        class VisibilitySheetHandler(SheetHandler):
+            def read(self, reader, recid, reclen):
+                visibility = reader.read_byte()
+                reader.skip(3)
+                sheet = self.cls(
+                    reader.read_int(),
+                    reader.read_string(),
+                    reader.read_string(),
+                )
+                return visibility, sheet
+
+        with zipfile.ZipFile(path) as workbook:
+            reader = BIFF12Reader(io.BytesIO(workbook.read("xl/workbook.bin")))
+        handlers = BIFF12Reader.handlers.copy()
+        handlers[biff12.SHEET] = VisibilitySheetHandler()
+        reader.handlers = handlers
+        visible_sheets = set()
+        for record, data in reader:
+            if record == biff12.SHEET:
+                visibility, sheet = data
+                if visibility == 0:
+                    visible_sheets.add(sheet.name.strip())
+        reader.close()
+
+        if hasattr(path, "seek"):
+            path.seek(0)
+        raw_sheets = pd.read_excel(path, sheet_name=None, header=None, engine="pyxlsb")
+        sheets = {}
+        for name, raw in raw_sheets.items():
+            name = str(name).strip()
+            if name not in visible_sheets:
+                continue
+            nonempty_counts = raw.notna().sum(axis=1)
+            if nonempty_counts.empty or nonempty_counts.max() == 0:
+                sheets[name] = _tidy(raw)
+                continue
+            header_row = int(nonempty_counts.idxmax())
+            headers = [
+                str(value).strip() if pd.notna(value) else f"Unnamed: {i}"
+                for i, value in enumerate(raw.iloc[header_row])
+            ]
+            df = raw.iloc[header_row + 1:].copy()
+            df.columns = headers
+            sheets[name] = _tidy(df)
+        return sheets
+    sheets = pd.read_excel(
+        path,
+        sheet_name=None,
+    )
     return {str(name).strip(): _tidy(df) for name, df in sheets.items()}
 
 
@@ -205,6 +268,33 @@ def log(conn, user, table, action, filename, before, after, details):
     )
 
 
+def archive_table(conn, table, rows_count):
+    """Keep the table that is about to be replaced as an earlier version, then delete the versions
+    that are older than the last KEEP_VERSIONS. Runs inside the same transaction as the replacement."""
+    version = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) + 1 FROM table_versions WHERE table_name=?", (table,)
+    ).fetchone()[0]
+    archived = f"{table}__v{version}"
+    # who uploaded the data we are about to archive, and when (from the change log)
+    last = conn.execute(
+        "SELECT changed_at, user, filename FROM change_log WHERE table_name=? "
+        "AND action IN ('CREATED', 'REPLACED') ORDER BY id DESC LIMIT 1", (table,)
+    ).fetchone() or (None, None, None)
+    conn.execute(f"ALTER TABLE {q(table)} RENAME TO {q(archived)}")
+    conn.execute(
+        "INSERT INTO table_versions VALUES (?,?,?,?,?,?,?,?)",
+        (table, version, archived, last[0], last[1], last[2], rows_count, now()),
+    )
+    too_old = conn.execute(
+        "SELECT archived_name FROM table_versions WHERE table_name=? ORDER BY version DESC LIMIT -1 OFFSET ?",
+        (table, KEEP_VERSIONS),
+    ).fetchall()
+    for (name,) in too_old:
+        conn.execute(f"DROP TABLE IF EXISTS {q(name)}")
+        conn.execute("DELETE FROM table_versions WHERE archived_name=?", (name,))
+    return archived
+
+
 def handle_file(conn, f, filename, user, template_name):
     """f is any file-like object (the uploaded file); filename is its name;
     template_name is the template the user picked from the list.
@@ -227,9 +317,13 @@ def handle_file(conn, f, filename, user, template_name):
     if template_name not in list_templates():
         return reject(["Choose a template from the list."])
     if ext not in ALLOWED:
-        return reject(["Only CSV, XLSX and XLS files are allowed."])
+        return reject(["Only CSV, XLSX, XLS and XLSB files are allowed."])
     try:
         sheets = read_file(f, ext)
+    except ImportError as e:
+        if ext == "xlsb":
+            return reject(["Reading XLSB files requires the pyxlsb package. Install it with 'pip install pyxlsb'."])
+        return reject([f"The file could not be read ({type(e).__name__}). Check it is not damaged."])
     except Exception as e:
         return reject([f"The file could not be read ({type(e).__name__}). Check it is not damaged."])
     if not sheets:
@@ -247,7 +341,7 @@ def handle_file(conn, f, filename, user, template_name):
         jobs.append((base, df, template[0][0]))
     else:
         if ext == "csv":
-            return reject(["This template has several sheets, so upload an Excel file (XLSX or XLS)."])
+            return reject(["This template has several sheets, so upload an Excel file (XLSX, XLS or XLSB)."])
         have = {s.lower(): s for s in sheets}  # sheet names are not case sensitive; their order does not matter
         wanted = {s.lower() for s, _ in template}
         missing = [s for s, _ in template if s.lower() not in have]
@@ -277,12 +371,12 @@ def handle_file(conn, f, filename, user, template_name):
             types = [column_type(df[c]) for c in cols]
             rows = [tuple(clean(v) for v in r) for r in df.itertuples(index=False, name=None)]
             before = conn.execute(f"SELECT COUNT(*) FROM {q(table)}").fetchone()[0] if exists else None
-            if exists:
-                conn.execute(f"DROP TABLE {q(table)}")
+            archived = archive_table(conn, table, before) if exists else None  # keep the old data as an earlier version
             conn.execute(f"CREATE TABLE {q(table)} (" + ", ".join(f"{q(c)} {t}" for c, t in zip(cols, types)) + ")")
             conn.executemany(f"INSERT INTO {q(table)} VALUES ({','.join('?' * len(cols))})", rows)
             action = "REPLACED" if exists else "CREATED"
             details = f"{len(cols)} columns, template {template_name}" + (f", sheet {sheet}" if multi else "")
+            details += f", previous version kept as {archived}" if archived else ""
             log(conn, user, table, action, filename, before, len(rows), details)
             result["tables"].append({"table": table, "status": action.lower(), "rows": len(rows)})
         conn.execute("COMMIT")

@@ -1,5 +1,6 @@
 #import libraries
 import html
+import inspect
 import os
 import gradio as gr
 import pandas as pd
@@ -66,6 +67,7 @@ zain_theme = gr.themes.Soft(
     primary_hue=zain_teal,
     secondary_hue=zain_purple,
     neutral_hue="slate",
+    radius_size=gr.themes.sizes.radius_lg,
     font=[gr.themes.GoogleFont("Poppins"), "sans-serif"],
 ).set(
     button_primary_background_fill="*primary_500",
@@ -98,6 +100,53 @@ custom_css = """
     font-size: 1rem;
 }
 
+.zain-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 150px;
+    padding: 30px 38px;
+    overflow: hidden;
+    border-radius: 18px;
+    background: linear-gradient(115deg, #43206a 0%, #5C2D91 52%, #008b8e 100%);
+}
+
+.zain-header::after {
+    content: "";
+    position: absolute;
+    width: 260px;
+    height: 260px;
+    right: 68px;
+    top: -150px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 50%;
+    box-shadow: 0 0 0 28px rgba(255, 255, 255, 0.05),
+                0 0 0 58px rgba(255, 255, 255, 0.04);
+}
+
+.header-copy {
+    position: relative;
+    z-index: 1;
+}
+
+.zain-header .header-eyebrow {
+    margin: 0 0 8px;
+    color: rgba(255, 255, 255, 0.76) !important;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+}
+
+.zain-header .header-copy h1 {
+    font-size: clamp(1.8rem, 4vw, 2.35rem);
+    letter-spacing: -0.035em;
+}
+
+.zain-header .header-copy p:last-child {
+    margin-top: 8px;
+    font-size: 1rem;
+}
 
 .user-info-row {
     margin-bottom: 15px;
@@ -201,21 +250,225 @@ custom_css = """
 .user-head {
     align-items: center;
     border-bottom: 1px solid var(--border-color-primary);
-    padding: 4px 0;
+    padding: 8px 12px !important;
 }
 
 .user-head {
     font-weight: 600;
+    font-size: 0.85rem;
+    color: #5C2D91;
+    background: rgba(92, 45, 145, 0.07);
+    border-bottom: none;
+    border-radius: 8px;
+}
+
+.user-row:hover {
+    background: rgba(0, 163, 166, 0.07);
+}
+
+.user-row p,
+.user-head p {
+    margin: 0 !important;
+}
+
+.badge {
+    display: inline-block;
+    padding: 2px 12px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.badge-admin {
+    background: rgba(126, 79, 192, 0.16);
+    color: #7E4FC0;
+}
+
+.badge-user {
+    background: rgba(0, 163, 166, 0.16);
+    color: #00868A;
 }
 
 .trash-btn {
     min-width: 44px !important;
 }
 
+/* Page width: centred on wide screens */
+.gradio-container {
+    max-width: 1280px !important;
+    font-size: 16px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding: 28px 0 56px !important;
+    background: #f4f6fb !important;
+}
+
+/* Top bar: who is signed in + log out */
+.user-bar {
+    align-items: center !important;
+    padding: 12px 18px !important;
+    margin-bottom: 16px;
+    background: var(--background-fill-primary);
+    border: 1px solid var(--border-color-primary);
+    border-radius: 14px;
+    box-shadow: 0 3px 12px rgba(36, 31, 48, 0.04);
+}
+
+.user-bar p {
+    margin: 0 !important;
+}
+
+.logout-btn {
+    min-width: 110px !important;
+}
+
+/* Cards: one white panel per section */
+/* One frame per tab: the tab panel itself is the card, so every tab has the same width */
+/* The page width is fixed, so it cannot shrink or grow with what a tab contains.
+   The header, the top bar and the tabs all use exactly the same width. */
+.zain-header,
+.user-bar,
+.tabs {
+    width: min(1200px, 94vw) !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+
+.tabitem,
+div[role="tabpanel"] {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: 480px;
+    padding: 28px !important;
+    background: var(--background-fill-primary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 18px !important;
+    box-shadow: 0 8px 26px rgba(36, 31, 48, 0.06);
+}
+
+/* Sections inside a panel: no frame of their own, just spacing */
+.card {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    padding: 0 !important;
+    gap: 14px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.card + .card {
+    margin-top: 24px;
+    padding-top: 24px !important;
+    border-top: 1px solid var(--border-color-primary) !important;
+}
+
+.card-title {
+    display: inline-block;
+    padding-bottom: 6px;
+    border-bottom: 3px solid #00A3A6;
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: #5C2D91;
+}
+
+/* Bigger tab buttons */
+button[role="tab"] {
+    font-size: 1.1rem !important;
+    padding: 12px 26px !important;
+    border-radius: 10px 10px 0 0 !important;
+    transition: color 160ms ease, background-color 160ms ease;
+}
+
+/* Bigger fields and buttons inside the cards */
+.card input,
+.card textarea,
+.card select,
+.card label span {
+    font-size: 1rem !important;
+}
+
+.card button {
+    min-height: 44px !important;
+    font-size: 1rem !important;
+}
+
+/* Rows that hold a field and a button side by side */
+.toolbar {
+    align-items: flex-end !important;
+    gap: 12px !important;
+}
+
+.toolbar > * {
+    align-self: flex-end !important;
+}
+
+.toolbar .gr-button {
+    height: 48px !important;
+    min-height: 48px !important;
+}
+
+/* Short notes: only drawn as a box when they contain text */
+.info-box:has(p),
+.info-box:has(li) {
+    padding: 10px 14px;
+    background: rgba(0, 163, 166, 0.08);
+    border-left: 4px solid #00A3A6;
+    border-radius: 8px;
+}
+
+.info-box p {
+    margin: 4px 0 !important;
+}
+
 footer {
     display: none !important;
 }
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+    outline: 3px solid rgba(0, 163, 166, 0.42) !important;
+    outline-offset: 2px !important;
+}
+
+@media (max-width: 640px) {
+    .gradio-container {
+        padding: 16px 0 32px !important;
+    }
+
+    .zain-header {
+        min-height: 132px;
+        padding: 24px;
+    }
+
+    .tabitem,
+    div[role="tabpanel"] {
+        min-height: 360px;
+        padding: 18px !important;
+    }
+
+    button[role="tab"] {
+        padding: 10px 14px !important;
+        font-size: 0.95rem !important;
+    }
+}
 """
+# For finding layout problems: set HR_DEBUG_LAYOUT=1 before starting the app to draw coloured outlines
+if os.environ.get("HR_DEBUG_LAYOUT"):
+    custom_css += """
+    .gradio-container { outline: 4px solid orange !important; }
+    .tabs { outline: 4px solid red !important; }
+    .tabitem, div[role="tabpanel"] { outline: 4px dashed blue !important; }
+    .card { outline: 3px dotted green !important; }
+    """
+
 #checks users to fetch data to display appropriately
 
 def _user(request): 
@@ -290,7 +543,8 @@ def list_tables(request: gr.Request):
 	# the explaination for this is that the connection returns  this format [("employees",), ("payroll",)] so when taking row zero we take only the string
         for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name NOT IN ('change_log', 'users') AND name NOT LIKE 'sqlite_%' ORDER BY name"          )
+            "AND name NOT IN ('change_log', 'users', 'table_versions') AND name NOT LIKE 'sqlite_%' "
+            "AND name NOT IN (SELECT archived_name FROM table_versions) ORDER BY name"          )  # earlier versions stay in the db but are not listed
     ]
 
     conn.close()
@@ -365,75 +619,101 @@ def cancel_delete():  # (new) the "Cancel" button
 
 
 # App UI
-with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
+_blocks_kwargs = {"fill_width": True} if "fill_width" in inspect.signature(gr.Blocks.__init__).parameters else {}
+with gr.Blocks(title="Zain HR - Data Verification Portal", **_blocks_kwargs,css="""
+.toolbar {
+    display: flex;
+    align-items: flex-end !important;
+    gap: 12px;
+}
+.toolbar .gr-button {
+    height: 48px !important;
+    min-height: 48px !important;
+}
+""") as demo:
     gr.HTML(
         """
         <div class="zain-header">
-            <h1>Zain HR Portal</h1>
-            <p>Data Sheet Verification & Management System</p>
+            <div class="header-copy">
+                <p class="header-eyebrow">PEOPLE OPERATIONS</p>
+                <h1>Zain HR Portal</h1>
+                <p>Verify, manage, and review your HR data in one place.</p>
+            </div>
         </div>
         """
     )
 
-    with gr.Row():
+    with gr.Row(elem_classes="user-bar"):
         who_md = gr.Markdown()
-        logout_btn = gr.Button("Log out", link="/logout", scale=0)  
+        logout_btn = gr.Button("Log out", link="/logout", scale=0, size="sm", elem_classes="logout-btn")
+
     with gr.Tab("Upload"):
-        template_pick = gr.Dropdown(label="Template", choices=[], info="Choose the template your file follows")  # (new)
-        template_info = gr.Markdown()  
-        files = gr.File(
-            label="Choose CSV, XLSX or XLS files",
-            file_count="multiple",
-            file_types=[".csv", ".xlsx", ".xls"],
-            type="filepath",
-        )
-        go = gr.Button("Upload", variant="primary")
-        result = gr.Markdown()
+        with gr.Column(elem_classes="card"):
+            
+            template_pick = gr.Dropdown(label="Choose Template", choices=[])  # (new)
+            template_info = gr.Markdown(elem_classes="info-box")
+            files = gr.File(
+                label="Choose CSV, XLSX, XLS or XLSB files",
+                file_count="multiple",
+                file_types=[".csv", ".xlsx", ".xls", ".xlsb"],
+                type="filepath",
+            )
+            go = gr.Button("Upload", variant="primary")
+            result = gr.Markdown()
+
     with gr.Tab("Tables"):
-        note_tables = gr.Markdown()
-        table_pick = gr.Dropdown(label="Table", choices=[])
-        table_view = gr.Dataframe(interactive=False)
-        refresh_tables = gr.Button("Refresh")
+        with gr.Column(elem_classes="card"):
+            note_tables = gr.Markdown(elem_classes="info-box")
+            table_pick = gr.Dropdown(label="Choose Table", choices=[])
+            table_view = gr.Dataframe(interactive=False)
+
     with gr.Tab("Change log"):
-        note_log = gr.Markdown()
-        log_view = gr.Dataframe(interactive=False)
-        refresh_log = gr.Button("Refresh")
-    with gr.Tab("Users", visible=False) as tab_users:  
+        with gr.Column(elem_classes="card"):
+            note_log = gr.Markdown(elem_classes="info-box")
+            log_view = gr.Dataframe(interactive=False)
+
+    with gr.Tab("Users", visible=False) as tab_users:
         users_state = gr.State([])  # (new) the list of users, redrawn below whenever it changes
 
-        @gr.render(inputs=users_state)
-        def draw_users(rows):  # (new) one row per user: name, role, created, trash icon
-            with gr.Row(elem_classes="user-head"):
-                gr.HTML("Username")
-                gr.HTML("Role")
-                gr.HTML("Created")
-                gr.HTML("", min_width=44, scale=0)
-            if not rows:
-                gr.HTML("No users to show.")
-            for username, role, created in rows:
-                with gr.Row(elem_classes="user-row"):
-                    gr.HTML(html.escape(username))
-                    gr.HTML(role)
-                    gr.HTML(html.escape(str(created)))
-                    trash = gr.Button(
-    "",
-    icon=TRASH_ICON,
-    size="sm",
-    scale=0,
-    min_width=44,
-    elem_classes="trash-btn"
-)
-                    trash.click(make_ask(username), None, [pending_user, confirm_box, confirm_md, user_msg])
+        with gr.Column(elem_classes="card"):
+            
+            @gr.render(inputs=users_state)
+            def draw_users(rows):  # (new) one row per user: name, role, created, trash icon
+                with gr.Row(elem_classes="user-head"):
+                    gr.HTML("Username", scale=3)
+                    gr.HTML("Role", scale=2)
+                    gr.HTML("Created", scale=3)
+                    gr.HTML("", min_width=44, scale=0)
+                if not rows:
+                    gr.HTML("No users to show.")
+                for username, role, created in rows:
+                    badge = "badge-admin" if role == "admin" else "badge-user"
+                    with gr.Row(elem_classes="user-row"):
+                        gr.HTML(html.escape(username), scale=3)
+                        gr.HTML(f'<span class="badge {badge}">{role}</span>', scale=2)
+                        gr.HTML(html.escape(str(created)), scale=3)
+                        trash = gr.Button(
+                            "",
+                            icon=TRASH_ICON,
+                            size="sm",
+                            scale=0,
+                            min_width=44,
+                            elem_classes="trash-btn",
+                        )
+                        trash.click(make_ask(username), None, [pending_user, confirm_box, confirm_md, user_msg])
 
-        gr.HTML(f'<div class="note-warn">{_WARN_SVG}<span>Deleting a user is permanent and cannot be undone. '
-                "Use the trash icon in a user's row. You will be asked to confirm first.</span></div>")  # (new)
-        pending_user = gr.State("")  # (new) the user waiting for confirmation
-        user_msg = gr.Markdown()
-        gr.Markdown("**Add a user, or change an existing one** (leave the password empty to keep it)")
-        u_name = gr.Textbox(label="Username")
-        u_pass = gr.Textbox(label="Password (at least 8 characters)", type="password")
-        u_admin = gr.Checkbox(label="Admin")
-        save_btn = gr.Button("Save user", variant="primary")
+            gr.HTML(f'<div class="note-warn">{_WARN_SVG}<span>Deleting a user is permanent and cannot be undone. '
+                    "</span></div>")  # (new)
+            pending_user = gr.State("")  # (new) the user waiting for confirmation
+            user_msg = gr.Markdown()
+
+        with gr.Column(elem_classes="card"):
+            gr.Markdown("**Add a user, or change an existing one** ")
+            with gr.Row():
+                u_name = gr.Textbox(label="Username")
+                u_pass = gr.Textbox(label="Password (at least 8 characters)", type="password")
+            u_admin = gr.Checkbox(label="Admin")
+            save_btn = gr.Button("Save user", variant="primary")
 
     with gr.Group(visible=False, elem_id="delete-modal") as confirm_box:
         confirm_md = gr.HTML()
@@ -444,21 +724,20 @@ with gr.Blocks(title="Zain HR - Data Verification Portal") as demo:
                 variant="stop",
                 icon=TRASH_ICON,
                 scale=1,
-                min_width=0
+                min_width=0,
             )
             cancel_btn = gr.Button(
                 "Cancel",
                 variant="secondary",
                 scale=1,
-                min_width=0
+                min_width=0,
             )
+
     go.click(upload_files, [files, template_pick], [result, files]).then(show_log, None, log_view).then(
         list_tables, None, table_pick
     )
     template_pick.change(template_details, template_pick, template_info)  
     table_pick.change(show_table, table_pick, table_view)
-    refresh_tables.click(list_tables, None, table_pick)
-    refresh_log.click(show_log, None, log_view)
     save_btn.click(save_user_ui, [u_name, u_pass, u_admin], [user_msg, users_state, u_pass]).then(
         show_log, None, log_view
     )
@@ -480,4 +759,4 @@ if __name__ == "__main__":
         auth=checks.verify_login,
         theme=zain_theme,
         css=custom_css,
-        allowed_paths=[ICON_DIR],      )  
+        allowed_paths=[ICON_DIR],      )
